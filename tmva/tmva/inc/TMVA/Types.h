@@ -120,7 +120,8 @@ namespace TMVA {
          kRearranged,
          kGauss,
          kUniform,
-         kMaxVariableTransform
+         kMaxVariableTransform, 
+         kDAETransform
       };
 
       // type of analysis
