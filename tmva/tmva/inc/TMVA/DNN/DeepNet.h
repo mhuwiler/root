@@ -89,12 +89,23 @@ private:
    size_t fBatchHeight; ///< The height of the batch used for training/testing.
    size_t fBatchWidth;  ///< The width of the batch used for training/testing.
 
+   std::vector<Matrix_t> fLocalWeights; ///< Storing weights of all layers
+   std::vector<Matrix_t> fLocalHiddenBiases; ///< Storing hidden biases locally for all layers
+   std::vector<Matrix_t> fLocalVisibleBiases; ///< Stroring visible biases locally for all layers
+
    bool fIsTraining; ///< Is the network training?
 
    ELossFunction fJ;      ///< The loss function of the network.
    EInitialization fI;    ///< The initialization method of the network.
    ERegularization fR;    ///< The regularization used for the network.
    Scalar_t fWeightDecay; ///< The weight decay factor.
+   bool fWasPreTrained;   ///< If PreTrain wa executed.
+   Scalar_t fDropoutProbability; 
+   Scalar_t fCorruptionLevel; 
+
+   MsgLogger* fLogger;                     //! message logger
+
+   MsgLogger& Log() const { return *fLogger; }
 
 public:
    /*! Default Constructor */
@@ -275,6 +286,13 @@ public:
    /*! Print the Deep Net Info */
    void Print();
 
+   void WriteToXML(const TString filepath); 
+
+   void ReadFromXML(const TString filepath); 
+   void WriteMatrixXML(void *parent, const char *name, const TMatrixT<Double_t> &X); 
+   void ReadMatrixXML(void *xml, const char *name, TMatrixT<Double_t> &X);
+
+
    /*! Get the layer in the vector of layers at poistion i */
    inline Layer_t *GetLayerAt(size_t i) { return fLayers[i]; }
    inline const Layer_t *GetLayerAt(size_t i) const { return fLayers[i]; }
@@ -300,7 +318,30 @@ public:
    inline size_t GetBatchHeight() const { return fBatchHeight; }
    inline size_t GetBatchWidth() const { return fBatchWidth; }
 
+   inline double GetDropoutProbability() const { return fDropoutProbability; }
+   inline double GetCorruptionLevel() const { return fCorruptionLevel; }
+
+   const std::vector<Matrix_t> &GetLocalWeights() const { return fLocalWeights; }
+   std::vector<Matrix_t> &GetLocalWeights() { return fLocalWeights; }
+
+   const Matrix_t &GetLocalWeightsAt(size_t i) const { return fLocalWeights[i]; }
+   Matrix_t &GetLocalWeightsAt(size_t i) { return fLocalWeights[i]; }
+
+   const std::vector<Matrix_t> &GetLocalHiddenBiases() const { return fLocalHiddenBiases; }
+   std::vector<Matrix_t> &GetLocalHiddenBiases() { return fLocalHiddenBiases; }
+
+   const Matrix_t &GetLocalHiddenBiasesAt(size_t i) const { return fLocalHiddenBiases[i]; }
+   Matrix_t &GetLocalHiddenBiasesAt(size_t i) { return fLocalHiddenBiases[i]; }
+
+   const std::vector<Matrix_t> &GetLocalVisibleBiases() const { return fLocalVisibleBiases; }
+   std::vector<Matrix_t> &GetLocalVisibleBiases() { return fLocalVisibleBiases; }
+
+   const Matrix_t &GetLocalVisibleBiasesAt(size_t i) const { return fLocalVisibleBiases[i]; }
+   Matrix_t &GetLocalVisibleBiasesAt(size_t i) { return fLocalVisibleBiases[i]; }
+
+
    inline bool IsTraining() const { return fIsTraining; }
+   inline bool GetWasPreTrained() const {return fWasPreTrained;}
 
    inline ELossFunction GetLossFunction() const { return fJ; }
    inline EInitialization GetInitialization() const { return fI; }
@@ -322,6 +363,8 @@ public:
    inline void SetInitialization(EInitialization I) { fI = I; }
    inline void SetRegularization(ERegularization R) { fR = R; }
    inline void SetWeightDecay(Scalar_t weightDecay) { fWeightDecay = weightDecay; }
+   inline void SetDropoutProbability(Scalar_t dropout) {fDropoutProbability = dropout; }
+   inline void SetCorruptionLevel(Scalar_t corruptionLevel) {fCorruptionLevel = corruptionLevel; } 
 };
 
 //
@@ -752,6 +795,8 @@ auto TDeepNet<Architecture_t, Layer_t>::PreTrain(std::vector<Matrix_t> &input,
                                                  Scalar_t corruptionLevel, Scalar_t dropoutProbability, size_t epochs,
                                                  EActivationFunction f, bool applyDropout) -> void
 {
+   SetDropoutProbability(dropoutProbability); 
+   SetCorruptionLevel(corruptionLevel); 
    std::vector<Matrix_t> inp1;
    std::vector<Matrix_t> inp2;
    size_t numOfHiddenLayers = sizeof(numHiddenUnitsPerLayer) / sizeof(numHiddenUnitsPerLayer[0]);
@@ -833,8 +878,22 @@ auto TDeepNet<Architecture_t, Layer_t>::PreTrain(std::vector<Matrix_t> &input,
       }
       fLayers.back()->Print();
    }
-}
 
+   for(size_t layer=0; layer<numOfHiddenLayers; layer++)
+   {
+      this->GetLocalWeights().emplace_back(this->GetLayerAt( (3 * layer) + 2 )->GetWeightsAt(0).GetNrows(), this->GetLayerAt( (3 * layer) + 2 )->GetWeightsAt(0).GetNcols());
+      this->GetLocalHiddenBiases().emplace_back(this->GetLayerAt( (3 * layer) + 2 )->GetBiasesAt(0).GetNrows(), 1);
+      this->GetLocalVisibleBiases().emplace_back(this->GetLayerAt( (3 * layer) + 2 )->GetBiasesAt(1).GetNrows(), 1);
+
+      Architecture_t::Copy(this->GetLocalWeightsAt(layer), this->GetLayerAt( (3 * layer) + 2 )->GetWeightsAt(0));
+      Architecture_t::Copy(this->GetLocalHiddenBiasesAt(layer), this->GetLayerAt( (3 * layer) + 2 )->GetBiasesAt(0));
+      Architecture_t::Copy(this->GetLocalVisibleBiasesAt(layer), this->GetLayerAt( (3 * layer) + 2 )->GetBiasesAt(1));
+
+      this->WriteToFile(layer, numOfHiddenLayers);
+   }
+
+   fWasPreTrained = true;
+}
 //______________________________________________________________________________
 template <typename Architecture_t, typename Layer_t>
 auto TDeepNet<Architecture_t, Layer_t>::FineTune(std::vector<Matrix_t> &input, std::vector<Matrix_t> &testInput,
@@ -1137,6 +1196,7 @@ auto TDeepNet<Architecture_t, Layer_t>::Print() -> void
       fLayers[i]->Print();
    }
 }
+
 } // namespace DNN
 } // namespace TMVA
 
